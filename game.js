@@ -94,6 +94,7 @@ class GameObject {
         this.fadeProgress = 0; // New property for fade effect
         this.isFading = false; // New property to track if object is fading
         this.isOffscreen = false;
+        this.lastSlicedTime = 0;
     }
 
     initializeFruitData() {
@@ -141,6 +142,7 @@ class GameObject {
             const angle = baseAngle + (i * Math.PI); // Second piece goes in opposite direction
             piece.velocityX = this.velocityX + Math.cos(angle) * spread;
             piece.velocityY = this.velocityY + Math.sin(angle) * spread;
+            piece.lastSlicedTime = Date.now(); // Set invulnerability window
             pieces.push(piece);
         }
 
@@ -907,9 +909,9 @@ class Game {
         this.score = 0;
         this.objects = [];
         this.lastSpawnTime = 0;
-        this.spawnInterval = 3000; // Base spawn interval of 3 seconds
-        this.minSpawnInterval = 3000; // Minimum 3 seconds between spawns
-        this.maxSpawnInterval = 5000; // Maximum 5 seconds between spawns
+        this.spawnInterval = 1500; // Base spawn interval of 1.5 seconds
+        this.minSpawnInterval = 1000; // Minimum 1 second between spawns
+        this.maxSpawnInterval = 2000; // Maximum 2 seconds between spawns
         this.touchStart = null;
         this.gameStartTime = Date.now();
         this.speedMultiplier = 1;
@@ -994,13 +996,14 @@ class Game {
             setTimeout(() => this.resize(), 100);
         });
         
+        // Touch events
         this.canvas.addEventListener('touchstart', (e) => {
             e.preventDefault();
             const rect = this.canvas.getBoundingClientRect();
             const rawX = e.touches[0].clientX;
             const rawY = e.touches[0].clientY;
 
-            // Map to CSS-pixel space (not canvas buffer space)
+            // Map to CSS-pixel space
             const x = (rawX - rect.left);
             const y = (rawY - rect.top);
 
@@ -1015,7 +1018,7 @@ class Game {
             const rawX = e.touches[0].clientX;
             const rawY = e.touches[0].clientY;
 
-            // Map to CSS-pixel space (not canvas buffer space)
+            // Map to CSS-pixel space
             const x = (rawX - rect.left);
             const y = (rawY - rect.top);
             
@@ -1040,6 +1043,49 @@ class Game {
 
         this.canvas.addEventListener('touchend', () => {
             this.touchStart = null;
+        });
+
+        // Mouse events for desktop testing
+        this.canvas.addEventListener('mousedown', (e) => {
+            const rect = this.canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            this.touchStart = { x, y };
+        });
+
+        this.canvas.addEventListener('mousemove', (e) => {
+            if (!this.touchStart) return;
+
+            const rect = this.canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            // Create slash effect for every swipe
+            this.slashEffects.push(new SlashEffect(
+                this.touchStart.x,
+                this.touchStart.y,
+                x,
+                y
+            ));
+
+            this.checkSlice(
+                this.touchStart.x,
+                this.touchStart.y,
+                x,
+                y
+            );
+
+            // Update touch start for continuous swipes
+            this.touchStart = { x, y };
+        });
+
+        this.canvas.addEventListener('mouseup', () => {
+            this.touchStart = null;
+        });
+
+        // Prevent context menu on right click
+        this.canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
         });
     }
 
@@ -1089,8 +1135,7 @@ class Game {
         
         for (let i = this.objects.length - 1; i >= 0; i--) {
             const obj = this.objects[i];
-            if (!obj.sliced && this.lineIntersectsObject(startX, startY, endX, endY, obj)) {
-                // Create particles for slice effect
+            if (!obj.sliced && Date.now() - obj.lastSlicedTime > 200 && this.lineIntersectsObject(startX, startY, endX, endY, obj)) {
                 obj.createSliceParticles();
                 
                 // Create smaller pieces
@@ -1158,8 +1203,8 @@ class Game {
             this.speedMultiplier += 0.2;
             this.lastDifficultyIncrease = currentTime;
             // Don't decrease spawn interval below minimum
-            this.minSpawnInterval = Math.max(2000, this.minSpawnInterval - 100); // Won't go below 2 seconds
-            this.maxSpawnInterval = Math.max(4000, this.maxSpawnInterval - 100); // Won't go below 4 seconds
+            this.minSpawnInterval = Math.max(800, this.minSpawnInterval - 50); // Won't go below 0.8 seconds
+            this.maxSpawnInterval = Math.max(1500, this.maxSpawnInterval - 50); // Won't go below 1.5 seconds
         }
 
         // Update background color every minute
