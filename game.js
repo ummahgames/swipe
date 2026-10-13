@@ -1,1254 +1,293 @@
-class GameObject {
-    // Static cache for fruit-specific data
-    static fruitDataCache = {
-        grape: [[-7,7],[0,0],[7,7],[-4,-4],[4,-4]],
-        watermelon: Array.from({length: 7}, () => ({
-            angle: Math.random() * Math.PI*2,
-            dist: Math.random() * 10
-        })),
-        dragonfruit: Array.from({length: 12}, () => ({
-            angle: Math.random() * Math.PI*2,
-            radius: Math.random() * 20
-        })),
-        papaya: Array.from({length: 9}, () => ({
-            angle: Math.PI/2 + (Math.random()-0.5),
-            radius: 7 + Math.random()*5
-        })),
-        kiwi: Array.from({length: 18}, (_, i) => ({
-            angle: i * Math.PI*2/18,
-            radius: 10
-        }))
-    };
-
-    // Static color palette shared across all instances
-    static COLORS = {
-        apple: { main: '#ff2d2d', stem: '#5a350c', leaf: '#2ecc40' },
-        banana: { main: '#ffe135', stem: '#866c09', tip: '#d6b70a' },
-        orange: { main: '#ff9500', stem: '#ad6407', leaf: '#aeea00' },
-        grape: { main: '#6a1b9a', stem: '#68401a' },
-        pineapple: { main: '#ffdd55', stem: '#238b22', skin: '#a9743a', leaves: '#238b22' },
-        starfruit: { main: '#ffe659', stem: '#af8508' },
-        dragonfruit: { main: '#fc46aa', scales: '#57eb64', dots: '#000000' },
-        watermelon: { main: '#fc4c4e', rind: '#188835', seeds: '#222' },
-        pomegranate: { main: '#d9032e', stem: '#683214' },
-        passionfruit: { main: '#85266d', stem: '#745329' },
-        lychee: { main: '#e04947', stem: '#7f3523', skin: '#f8a4a4' },
-        papaya: { main: '#ffb23d', stem: '#8d5413', seeds: '#262200' },
-        mangosteen: { main: '#491f7e', stem: '#755217', cap: '#94fa7c' },
-        kiwi: { main: '#b0de4c', skin: '#725c27', seeds: '#222' },
-        persimmon: { main: '#fd6d1f', stem: '#70510e', cap: '#a1ce58' }
-    };
-
-    constructor(x, y, type, speedMultiplier, centerX, centerY, size = 1) {
-        this.x = x;
-        this.y = y;
-        this.type = type; // 'flying' or 'tossed' or 'orbital'
-        this.size = size; // 1 is normal size, 0.5 is half size, etc.
-        this.width = 40 * this.size;
-        this.height = 40 * this.size;
-        this.baseSpeed = 3; // Reduced from 5 to 3
-        this.speedMultiplier = speedMultiplier;
-        this.speed = this.baseSpeed * this.speedMultiplier;
-        this.angle = 0;
-        this.rotationSpeed = (Math.random() - 0.5) * 0.1;
-        this.sliced = false;
-        this.particles = [];
-        this.breakProgress = 0; // 0 to 1 for breaking animation
-        this.breakDirection = Math.random() > 0.5 ? 1 : -1;
-        this.pieces = []; // Array to hold smaller pieces
-        
-        // Randomly select a fruit type
-        this.fruitType = Math.floor(Math.random() * 15); // 15 different fruits
-        
-        // Gravitational properties
-        this.centerX = centerX;
-        this.centerY = centerY;
-        this.velocityX = 0;
-        this.velocityY = 0;
-        this.gravity = 0.2 * this.speedMultiplier;
-        
-        // Pre-calculate fruit-specific data
-        this.fruitData = this.initializeFruitData();
-        
-        // Initialize velocity based on position relative to center
-        const dx = this.x - this.centerX;
-        const dy = this.y - this.centerY;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        const angle = Math.atan2(dy, dx);
-        
-        // Calculate launch angle towards center with ±20 degree variation
-        const targetAngle = angle + Math.PI; // Angle towards center
-        const variation = (Math.random() - 0.5) * (Math.PI / 9); // ±20 degrees in radians
-        const launchAngle = targetAngle + variation;
-        
-        // Set initial velocity with some tangential component for elliptical orbit
-        const orbitalSpeed = (Math.random() * 2 + 3) * this.speedMultiplier;
-        const tangentialFactor = 0.7; // How much of the velocity is tangential vs radial
-        this.velocityX = Math.cos(launchAngle) * orbitalSpeed * (1 - tangentialFactor) + 
-                        Math.cos(launchAngle + Math.PI/2) * orbitalSpeed * tangentialFactor;
-        this.velocityY = Math.sin(launchAngle) * orbitalSpeed * (1 - tangentialFactor) + 
-                        Math.sin(launchAngle + Math.PI/2) * orbitalSpeed * tangentialFactor;
-        
-        this.sliceCount = 0;
-        this.maxSlices = 2; // Changed to 2 since we only want one split
-        this.fadeProgress = 0; // New property for fade effect
-        this.isFading = false; // New property to track if object is fading
-        this.isOffscreen = false;
-        this.lastSlicedTime = 0;
-    }
-
-    initializeFruitData() {
-        switch(this.fruitType) {
-            case 3: // Grape
-                return { coords: GameObject.fruitDataCache.grape };
-            case 7: // Watermelon
-                return { seeds: GameObject.fruitDataCache.watermelon };
-            case 6: // Dragonfruit
-                return { dots: GameObject.fruitDataCache.dragonfruit };
-            case 11: // Papaya
-                return { seeds: GameObject.fruitDataCache.papaya };
-            case 13: // Kiwi
-                return { seeds: GameObject.fruitDataCache.kiwi };
-            default:
-                return null;
-        }
-    }
-
-    breakIntoPieces() {
-        // If fruit is too small or has reached max slices, start fading
-        if (this.size <= 0.25 || this.sliceCount >= this.maxSlices) {
-            this.isFading = true; // Start fading instead of creating more pieces
-            return [];
-        }
-
-        const pieces = [];
-        const newSize = this.size * 0.7;
-        const spread = 8;
-        const baseAngle = Math.random() * Math.PI; // Random starting angle
-
-        // Create exactly 2 pieces
-        for (let i = 0; i < 2; i++) {
-            const piece = new GameObject(
-                this.x,
-                this.y,
-                this.type,
-                this.speedMultiplier,
-                this.centerX,
-                this.centerY,
-                newSize
-            );
-            piece.fruitType = this.fruitType;
-            piece.sliceCount = this.sliceCount + 1;
-            const angle = baseAngle + (i * Math.PI); // Second piece goes in opposite direction
-            piece.velocityX = this.velocityX + Math.cos(angle) * spread;
-            piece.velocityY = this.velocityY + Math.sin(angle) * spread;
-            piece.lastSlicedTime = Date.now(); // Set invulnerability window
-            pieces.push(piece);
-        }
-
-        // Mark this object as sliced to prevent further slicing
-        this.sliced = true;
-        this.isFading = true;
-
-        return pieces;
-    }
-
-    update() {
-        // Quick offscreen check
-        const margin = 100; // Buffer zone
-        this.isOffscreen = (
-            this.x < -margin ||
-            this.x > this.centerX * 2 + margin ||
-            this.y < -margin ||
-            this.y > this.centerY * 2 + margin
-        );
-
-        if (this.isOffscreen) return;
-
-        if (this.isFading) {
-            this.fadeProgress += 0.05;
-            if (this.fadeProgress >= 1) {
-                this.fadeProgress = 1;
-                return;
-            }
-        } else if (this.sliced) {
-            // Continue movement even when sliced
-            this.breakProgress += 0.1;
-            this.angle += this.breakDirection * 0.2;
-            
-            // Apply gravity and movement to sliced pieces
-            this.velocityY += this.gravity * 0.5; // Reduced gravity for sliced pieces
-            this.x += this.velocityX * 0.8; // Continue horizontal movement
-            this.y += this.velocityY;
-            
-            // Add some rotation based on movement
-            this.rotationSpeed = (this.velocityX * 0.01) + (Math.random() - 0.5) * 0.1;
-        } else {
-            // Calculate gravitational force
-            const dx = this.centerX - this.x;
-            const dy = this.centerY - this.y;
-            const distance = Math.sqrt(dx * dx + dy * dy);
-            
-            // Stronger gravity when closer to center for more elliptical orbits
-            const force = this.gravity / (distance * 0.05);
-            
-            // Apply gravitational force
-            this.velocityX += (dx / distance) * force;
-            this.velocityY += (dy / distance) * force;
-            
-            // Add slight drag to prevent infinite orbits
-            this.velocityX *= 0.999;
-            this.velocityY *= 0.999;
-            
-            // Update position
-            this.x += this.velocityX;
-            this.y += this.velocityY;
-            
-            // Update rotation
-            this.angle += this.rotationSpeed;
-        }
-
-        // Update only active particles
-        for (let i = this.particles.length - 1; i >= 0; i--) {
-            const particle = this.particles[i];
-            particle.update();
-            if (particle.life <= 0) {
-                this.particles.splice(i, 1);
-            }
-        }
-    }
-
-    draw(ctx) {
-        if (this.fadeProgress >= 1 || this.isOffscreen) return;
-
-        ctx.save();
-        ctx.translate(this.x, this.y);
-        
-        if (this.isFading) {
-            ctx.globalAlpha = 1 - this.fadeProgress;
-        }
-
-        if (this.sliced) {
-            ctx.rotate(this.angle);
-            const breakOffset = this.breakProgress * 30 * this.breakDirection;
-            
-            // Draw first half
-            ctx.save();
-            ctx.translate(breakOffset, 0);
-            this.drawFruit(ctx, this.width, this.height);
-            ctx.restore();
-            
-            // Draw second half
-            ctx.save();
-            ctx.translate(-breakOffset * 2, 0);
-            this.drawFruit(ctx, this.width, this.height);
-            ctx.restore();
-            
-            // Draw slice line
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(-this.width/2 + breakOffset, -this.height/2);
-            ctx.lineTo(this.width/2 + breakOffset, this.height/2);
-            ctx.stroke();
-        } else {
-            ctx.rotate(this.angle);
-            this.drawFruit(ctx, this.width, this.height);
-        }
-        ctx.restore();
-
-        // Draw only active particles
-        for (const particle of this.particles) {
-            particle.draw(ctx);
-        }
-    }
-
-    drawFruit(ctx, width, height) {
-        switch(this.fruitType) {
-            case 0: this.drawApple(ctx, width, height); break;
-            case 1: this.drawBanana(ctx, width, height); break;
-            case 2: this.drawOrange(ctx, width, height); break;
-            case 3: this.drawGrape(ctx, width, height); break;
-            case 4: this.drawPineapple(ctx, width, height); break;
-            case 5: this.drawStarfruit(ctx, width, height); break;
-            case 6: this.drawDragonfruit(ctx, width, height); break;
-            case 7: this.drawWatermelon(ctx, width, height); break;
-            case 8: this.drawPomegranate(ctx, width, height); break;
-            case 9: this.drawPassionfruit(ctx, width, height); break;
-            case 10: this.drawLychee(ctx, width, height); break;
-            case 11: this.drawPapaya(ctx, width, height); break;
-            case 12: this.drawMangosteen(ctx, width, height); break;
-            case 13: this.drawKiwi(ctx, width, height); break;
-            case 14: this.drawPersimmon(ctx, width, height); break;
-        }
-    }
-
-    drawApple(ctx, width, height) {
-        const c = GameObject.COLORS.apple;
-        ctx.save();
-        ctx.fillStyle = this.sliced ? c.main + '80' : c.main;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, width/2, height/2, 0, 0, Math.PI*2);
-        ctx.bezierCurveTo(width*0.3, height*0.5, -width*0.3, height*0.5, 0, height*0.35);
-        ctx.fill();
-
-        ctx.strokeStyle = c.stem;
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(0, -height/2.1);
-        ctx.bezierCurveTo(5, -height/2.3, 8, -height/2, 0, -height/2 + 10);
-        ctx.stroke();
-
-        ctx.fillStyle = c.leaf;
-        ctx.save();
-        ctx.translate(width/7, -height/2.4);
-        ctx.rotate(-Math.PI/8);
-        ctx.beginPath();
-        ctx.ellipse(0, 0, 10, 5, 0, 0, Math.PI*2);
-        ctx.fill();
-        ctx.restore();
-        ctx.restore();
-    }
-
-    drawBanana(ctx, width, height) {
-        const c = GameObject.COLORS.banana;
-        ctx.save();
-        ctx.fillStyle = this.sliced ? c.main + '80' : c.main;
-        ctx.beginPath();
-        ctx.moveTo(-width/2, height/8);
-        ctx.bezierCurveTo(
-            -width/3, -height/2, width/2, -height/2, width/2, height/8
-        );
-        ctx.bezierCurveTo(
-            width/3, height/1.7, -width/3, height/1.7, -width/2, height/8
-        );
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.fillStyle = c.tip;
-        ctx.beginPath();
-        ctx.arc(-width/2+2, height/8, 4, 0, Math.PI*2);
-        ctx.fill();
-
-        ctx.strokeStyle = c.stem;
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(width/2, height/8);
-        ctx.lineTo(width/2+5, height/8-5);
-        ctx.stroke();
-        ctx.restore();
-    }
-
-    drawOrange(ctx, width, height) {
-        const c = GameObject.COLORS.orange;
-        ctx.save();
-        ctx.fillStyle = this.sliced ? c.main + '80' : c.main;
-        ctx.beginPath();
-        ctx.arc(0, 0, width/2, 0, Math.PI*2);
-        ctx.fill();
-
-        ctx.strokeStyle = '#fff9a5';
-        for (let i = 0; i < 6; i++) {
-            ctx.beginPath();
-            ctx.moveTo(0, 0);
-            ctx.arc(0, 0, width/2.2, i * Math.PI/3, (i+0.5)*Math.PI/3);
-            ctx.stroke();
-        }
-        ctx.strokeStyle = c.stem;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(0, -height/2);
-        ctx.lineTo(0, -height/2-8);
-        ctx.stroke();
-        ctx.fillStyle = c.leaf;
-        ctx.beginPath();
-        ctx.ellipse(-width/7, -height/2.1, 7, 3, 0, 0, Math.PI*2);
-        ctx.fill();
-        ctx.restore();
-    }
-
-    drawGrape(ctx, width, height) {
-        const c = GameObject.COLORS.grape;
-        ctx.save();
-        const grapes = this.fruitData.coords;
-        grapes.forEach(([gx, gy]) => {
-            ctx.fillStyle = this.sliced ? c.main + '80' : c.main;
-            ctx.beginPath();
-            ctx.arc(gx, gy, width/6, 0, Math.PI*2);
-            ctx.fill();
-        });
-        ctx.strokeStyle = c.stem;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(0, -height/2);
-        ctx.lineTo(0, -height/2-10);
-        ctx.stroke();
-        ctx.restore();
-    }
-
-    drawPineapple(ctx, width, height) {
-        const c = GameObject.COLORS.pineapple;
-        ctx.save();
-        ctx.fillStyle = this.sliced ? c.main + '80' : c.main;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, width/2.3, height/2, 0, 0, Math.PI*2);
-        ctx.fill();
-
-        ctx.strokeStyle = c.skin;
-        ctx.lineWidth = 1.5;
-        for (let i = -width/2.3; i < width/2.3; i += 8) {
-            ctx.beginPath();
-            ctx.moveTo(i, -height/2);
-            ctx.lineTo(i, height/2);
-            ctx.stroke();
-        }
-        for (let j = -height/2; j < height/2; j += 8) {
-            ctx.beginPath();
-            ctx.moveTo(-width/2.3, j);
-            ctx.lineTo(width/2.3, j);
-            ctx.stroke();
-        }
-        // Leaves
-        ctx.save();
-        ctx.translate(0, -height/2);
-        ctx.fillStyle = c.leaves;
-        for (let i = 0; i < 6; i++) {
-            ctx.save();
-            ctx.rotate((i-2.5)*Math.PI/8);
-            ctx.beginPath();
-            ctx.moveTo(0,0);
-            ctx.lineTo(0,-17-Math.random()*6);
-            ctx.lineTo(7,0);
-            ctx.closePath();
-            ctx.fill();
-            ctx.restore();
-        }
-        ctx.restore();
-        ctx.restore();
-    }
-
-    drawStarfruit(ctx, width, height) {
-        const c = GameObject.COLORS.starfruit;
-        ctx.save();
-        ctx.fillStyle = this.sliced ? c.main + '80' : c.main;
-        ctx.beginPath();
-        for (let i = 0; i < 5; i++) {
-            const angle = (i * Math.PI * 2) / 5 - Math.PI/2;
-            const x = Math.cos(angle) * width/2;
-            const y = Math.sin(angle) * height/2;
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = c.stem;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(0, -height/2);
-        ctx.lineTo(0, -height/2 - 10);
-        ctx.stroke();
-        ctx.restore();
-    }
-
-    drawDragonfruit(ctx, width, height) {
-        const c = GameObject.COLORS.dragonfruit;
-        ctx.save();
-        ctx.fillStyle = this.sliced ? c.main + '80' : c.main;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, width/2, height/2, 0, 0, Math.PI*2);
-        ctx.fill();
-
-        ctx.fillStyle = c.scales;
-        for (let i = 0; i < 6; i++) {
-            ctx.save();
-            const angle = (i * Math.PI * 2) / 6;
-            ctx.rotate(angle);
-            ctx.beginPath();
-            ctx.ellipse(width/3, 0, 7, 2, angle, 0, Math.PI*2);
-            ctx.fill();
-            ctx.restore();
-        }
-
-        ctx.fillStyle = c.dots;
-        this.fruitData.dots.forEach(({angle, radius}) => {
-            ctx.beginPath();
-            ctx.arc(Math.cos(angle)*radius, Math.sin(angle)*radius, 1, 0, Math.PI*2);
-            ctx.fill();
-        });
-        ctx.restore();
-    }
-
-    drawWatermelon(ctx, width, height) {
-        const c = GameObject.COLORS.watermelon;
-        ctx.save();
-        ctx.fillStyle = c.rind;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, width/2, height/2, 0, 0, Math.PI*2);
-        ctx.fill();
-
-        ctx.fillStyle = this.sliced ? c.main + '80' : c.main;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, width/2-5, height/2-5, 0, 0, Math.PI*2);
-        ctx.fill();
-
-        ctx.fillStyle = c.seeds;
-        this.fruitData.seeds.forEach(({angle, dist}) => {
-            ctx.beginPath();
-            ctx.ellipse(Math.cos(angle)*dist, Math.sin(angle)*dist, 2, 4, angle, 0, Math.PI*2);
-            ctx.fill();
-        });
-        ctx.restore();
-    }
-
-    drawPomegranate(ctx, width, height) {
-        const c = GameObject.COLORS.pomegranate;
-        ctx.save();
-        ctx.fillStyle = this.sliced ? c.main + '80' : c.main;
-        ctx.beginPath();
-        ctx.arc(0, 0, width/2, 0, Math.PI*2);
-        ctx.fill();
-        // "Crown"
-        ctx.fillStyle = c.stem;
-        ctx.save();
-        ctx.translate(0, -height/2+2);
-        ctx.beginPath();
-        for (let i = 0; i < 5; i++) {
-            ctx.lineTo(Math.sin(i*1.257)*7, -Math.cos(i*1.257)*6);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-        ctx.restore();
-    }
-
-    drawPassionfruit(ctx, width, height) {
-        const c = GameObject.COLORS.passionfruit;
-        ctx.save();
-        ctx.fillStyle = this.sliced ? c.main + '80' : c.main;
-        ctx.beginPath();
-        ctx.arc(0, 0, width/2, 0, Math.PI*2);
-        ctx.fill();
-        ctx.strokeStyle = c.stem;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(0, -height/2);
-        ctx.lineTo(0, -height/2 - 8);
-        ctx.stroke();
-        ctx.restore();
-    }
-
-    drawLychee(ctx, width, height) {
-        const c = GameObject.COLORS.lychee;
-        ctx.save();
-        ctx.fillStyle = this.sliced ? c.main + '80' : c.main;
-        ctx.beginPath();
-        ctx.arc(0, 0, width/2, 0, Math.PI*2);
-        ctx.fill();
-        // Spiky skin
-        ctx.strokeStyle = c.skin;
-        for (let i = 0; i < 18; i++) {
-            const a = i*Math.PI*2/18;
-            ctx.beginPath();
-            ctx.moveTo(Math.cos(a)*(width/2-2), Math.sin(a)*(height/2-2));
-            ctx.lineTo(Math.cos(a)*(width/2+2), Math.sin(a)*(height/2+2));
-            ctx.stroke();
-        }
-        ctx.strokeStyle = c.stem;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(0, -height/2);
-        ctx.lineTo(0, -height/2 - 8);
-        ctx.stroke();
-        ctx.restore();
-    }
-
-    drawPapaya(ctx, width, height) {
-        const c = GameObject.COLORS.papaya;
-        ctx.save();
-        ctx.fillStyle = this.sliced ? c.main + '80' : c.main;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, width/2, height/2, 0, 0, Math.PI*2);
-        ctx.fill();
-
-        ctx.fillStyle = c.seeds;
-        this.fruitData.seeds.forEach(({angle, radius}) => {
-            ctx.beginPath();
-            ctx.arc(Math.cos(angle)*radius, Math.sin(angle)*radius, 1.4, 0, Math.PI*2);
-            ctx.fill();
-        });
-
-        ctx.strokeStyle = c.stem;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(0, -height/2);
-        ctx.lineTo(0, -height/2 - 10);
-        ctx.stroke();
-        ctx.restore();
-    }
-
-    drawMangosteen(ctx, width, height) {
-        const c = GameObject.COLORS.mangosteen;
-        ctx.save();
-        ctx.fillStyle = this.sliced ? c.main + '80' : c.main;
-        ctx.beginPath();
-        ctx.arc(0, 0, width/2, 0, Math.PI*2);
-        ctx.fill();
-        ctx.fillStyle = c.cap;
-        ctx.beginPath();
-        ctx.arc(0, -height/2 + 7, width/4, 0, Math.PI*2);
-        ctx.fill();
-        ctx.strokeStyle = c.stem;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(0, -height/2 + 2);
-        ctx.lineTo(0, -height/2 - 6);
-        ctx.stroke();
-        ctx.restore();
-    }
-
-    drawKiwi(ctx, width, height) {
-        const c = GameObject.COLORS.kiwi;
-        ctx.save();
-        ctx.fillStyle = this.sliced ? c.main + '80' : c.main;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, width/2, height/2.3, 0, 0, Math.PI*2);
-        ctx.fill();
-
-        ctx.strokeStyle = c.skin;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
-        ctx.fillStyle = c.seeds;
-        this.fruitData.seeds.forEach(({angle, radius}) => {
-            ctx.beginPath();
-            ctx.arc(Math.cos(angle)*radius, Math.sin(angle)*radius, 1, 0, Math.PI*2);
-            ctx.fill();
-        });
-        ctx.restore();
-    }
-
-    drawPersimmon(ctx, width, height) {
-        const c = GameObject.COLORS.persimmon;
-        ctx.save();
-        ctx.fillStyle = this.sliced ? c.main + '80' : c.main;
-        ctx.beginPath();
-        ctx.ellipse(0, 0, width/2, height/2.4, 0, 0, Math.PI*2);
-        ctx.fill();
-        // Cap
-        ctx.fillStyle = c.cap;
-        for (let i = 0; i < 4; i++) {
-            ctx.save();
-            ctx.rotate(i*Math.PI/2);
-            ctx.beginPath();
-            ctx.ellipse(0, -height/2.5, 8, 3, 0, 0, Math.PI*2);
-            ctx.fill();
-            ctx.restore();
-        }
-        ctx.strokeStyle = c.stem;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(0, -height/2.3);
-        ctx.lineTo(0, -height/2.3 - 7);
-        ctx.stroke();
-        ctx.restore();
-    }
-
-    createSliceParticles() {
-        // Create more particles for a more dramatic effect
-        const particleCount = 20;
-        const baseSpeed = 8;
-        
-        for (let i = 0; i < particleCount; i++) {
-            const angle = (Math.random() * Math.PI * 2);
-            const speed = Math.random() * baseSpeed + 2;
-            const size = Math.random() * 4 + 2;
-            
-            // Create particles with initial velocity based on the fruit's current velocity
-            const vx = this.velocityX * 0.5 + Math.cos(angle) * speed;
-            const vy = this.velocityY * 0.5 + Math.sin(angle) * speed;
-            
-            this.particles.push(new Particle(
-                this.x,
-                this.y,
-                vx,
-                vy,
-                this.getFruitColor() // Get the appropriate color for the fruit type
-            ));
-        }
-    }
-
-    getFruitColor() {
-        // Get the main color for the current fruit type
-        const fruitTypes = ['apple', 'banana', 'orange', 'grape', 'pineapple', 
-                          'starfruit', 'dragonfruit', 'watermelon', 'pomegranate', 
-                          'passionfruit', 'lychee', 'papaya', 'mangosteen', 
-                          'kiwi', 'persimmon'];
-        const fruitName = fruitTypes[this.fruitType];
-        return GameObject.COLORS[fruitName].main;
-    }
-}
-
-class Particle {
-    constructor(x, y, vx, vy, color = '#ffffff') {
-        this.x = x;
-        this.y = y;
-        this.vx = vx;
-        this.vy = vy;
-        this.life = 1;
-        this.size = Math.random() * 4 + 2; // Varied particle sizes
-        this.color = color;
-        this.rotation = Math.random() * Math.PI * 2;
-        this.rotationSpeed = (Math.random() - 0.5) * 0.2;
-    }
-
-    update() {
-        this.x += this.vx;
-        this.y += this.vy;
-        this.vy += 0.1; // Add gravity to particles
-        this.life -= 0.02;
-        this.rotation += this.rotationSpeed;
-        this.size *= 0.98; // Particles shrink over time
-    }
-
-    draw(ctx) {
-        ctx.save();
-        ctx.translate(this.x, this.y);
-        ctx.rotate(this.rotation);
-        ctx.fillStyle = this.color.replace(')', `, ${this.life})`).replace('rgb', 'rgba');
-        ctx.fillRect(-this.size/2, -this.size/2, this.size, this.size);
-        ctx.restore();
-    }
-}
-
-class SlashEffect {
-    constructor(startX, startY, endX, endY) {
-        this.startX = startX;
-        this.startY = startY;
-        this.endX = endX;
-        this.endY = endY;
-        this.life = 1;
-        this.width = 8;
-        this.particles = [];
-        this.createParticles();
-    }
-
-    createParticles() {
-        const dx = this.endX - this.startX;
-        const dy = this.endY - this.startY;
-        const length = Math.sqrt(dx * dx + dy * dy);
-        const angle = Math.atan2(dy, dx);
-        
-        // Create particles along the slash line
-        const numParticles = Math.floor(length / 10);
-        for (let i = 0; i < numParticles; i++) {
-            const t = i / numParticles;
-            const x = this.startX + dx * t;
-            const y = this.startY + dy * t;
-            
-            // Add some randomness to particle positions
-            const offset = (Math.random() - 0.5) * 10;
-            const perpX = Math.cos(angle + Math.PI/2) * offset;
-            const perpY = Math.sin(angle + Math.PI/2) * offset;
-            
-            this.particles.push({
-                x: x + perpX,
-                y: y + perpY,
-                size: Math.random() * 4 + 2,
-                life: 1,
-                speed: Math.random() * 2 + 1,
-                angle: angle + (Math.random() - 0.5) * Math.PI/4
-            });
-        }
-    }
-
-    update() {
-        this.life -= 0.05;
-        this.particles.forEach(p => {
-            p.life -= 0.05;
-            p.x += Math.cos(p.angle) * p.speed;
-            p.y += Math.sin(p.angle) * p.speed;
-            p.size *= 0.95;
-        });
-        this.particles = this.particles.filter(p => p.life > 0);
-    }
-
-    draw(ctx) {
-        // Draw the main slash line
-        ctx.save();
-        ctx.strokeStyle = `rgba(255, 255, 255, ${this.life * 0.8})`;
-        ctx.lineWidth = this.width * this.life;
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(this.startX, this.startY);
-        ctx.lineTo(this.endX, this.endY);
-        ctx.stroke();
-
-        // Draw particles
-        this.particles.forEach(p => {
-            ctx.fillStyle = `rgba(255, 255, 255, ${p.life * 0.8})`;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-            ctx.fill();
-        });
-        ctx.restore();
-    }
-}
-
-class SoundManager {
+/* Browser application, menus, input and the rendering loop. */
+(function (root) {
+  'use strict';
+  const H = root.Harvest;
+  const $ = id => document.getElementById(id);
+  const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const number = n => Math.floor(n).toLocaleString();
+  const icon = name => '<svg viewBox="0 0 24 24" aria-hidden="true">' + ({ sound: '<path d="m4 9 4 0 5-4v14l-5-4H4zM16 8c3 2 3 6 0 8m3-11c5 4 5 10 0 14"/>', muted: '<path d="m4 9 4 0 5-4v14l-5-4H4zM17 9l5 6m0-6-5 6"/>', close: '<path d="m6 6 12 12M18 6 6 18"/>', back: '<path d="m14 5-7 7 7 7M7 12h13"/>' }[name] || '') + '</svg>';
+  const stars = (passed, combo, precision) => '<span class="stars" aria-label="' + [passed, combo, precision].filter(Boolean).length + ' of 3 stars">' + [passed, combo, precision].map(s => '<span class="' + (s ? 'earned' : 'empty') + '" aria-hidden="true">★</span>').join('') + '</span>';
+  const bladeNames = ['Dewdrop', 'Orchard Peach', 'Citrus Gold', 'Moonlight', 'Canopy Jade', 'Stardust'];
+  class App {
     constructor() {
-        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        this.audioContext.suspend(); // Start suspended until user interaction
+      let storage; try { storage = root.localStorage; } catch (_) {}
+      this.store = new H.Store(storage);
+      if (!this.store.loaded && root.matchMedia?.('(prefers-reduced-motion: reduce)').matches) this.store.data.settings.reduced = true;
+      this.renderer = new H.Renderer($('gameCanvas'));
+      if (!this.renderer.ctx) throw new Error('Canvas 2D is unavailable in this browser.');
+      this.audio = new H.Audio(() => this.store.data.settings);
+      this.engine = null; this.screen = 'home'; this.chapter = Math.floor(this.store.data.unlocked / 5); this.settingsReturn = 'home';
+      this.clock = 0; this.lastFrame = 0; this.hudCache = {}; this.pointer = null; this.gestureId = 0; this.keys = new Set(); this.cursor = null; this.keyboardBlade = false;
+      this.lowFrames = 0; this.autoLow = false; this.toastTimer = null; this.first = true;
+      this.bind(); this.resize(); this.applySettings();
+      if (!this.store.data.tutorial) this.start('campaign', 0, true); else this.home();
+      if (this.store.warning) this.toast(this.store.warning);
+      this.frame = this.frame.bind(this); root.requestAnimationFrame(this.frame);
     }
-
+    settings() { return this.store.data.settings; }
+    applySettings() {
+      document.body.classList.toggle('high-contrast', this.settings().contrast);
+      document.body.classList.toggle('reduced-motion', this.settings().reduced);
+      if (this.engine) for (const key of ['sound', 'music', 'volume', 'reduced', 'contrast', 'quality', 'blade']) this.engine.settings[key] = this.settings()[key];
+      this.renderer.background = null;
+    }
+    setScreen(name) {
+      this.screen = name; document.body.dataset.screen = name;
+      const playing = name === 'playing';
+      $('panel').hidden = playing;
+      $('hud').hidden = !playing; $('playFooter').hidden = !playing; $('rushHud').hidden = !playing;
+      $('siteHeader').hidden = playing;
+      if (!playing) { this.renderer.trail = []; this.clearInput(); }
+    }
+    show(markup, name, label = 'Game menu') {
+      this.setScreen(name); const panel = $('panel'); panel.innerHTML = markup; panel.setAttribute('aria-label', label);
+      const modal = ['paused', 'results', 'settings'].includes(name);
+      panel.setAttribute('role', modal ? 'dialog' : 'region');
+      if (modal) panel.setAttribute('aria-modal', 'true'); else panel.removeAttribute('aria-modal');
+      panel.scrollTop = 0;
+      root.requestAnimationFrame(() => { const target = panel.querySelector('[data-focus]') || panel.querySelector('button:not(:disabled)'); (target || panel).focus({ preventScroll: true }); });
+    }
+    home() {
+      this.audio.stop(); this.engine = null; this.chapter = Math.floor(this.store.data.unlocked / 5); this.renderer.trail = [];
+      const save = this.store.data, level = H.LEVELS[save.unlocked], c = H.CHAPTERS[level.chapter];
+      const complete = save.levels[24]?.passed;
+      let totalStars = 0; for (const item of Object.values(save.levels)) totalStars += [item.passed, item.combo, item.precision].filter(Boolean).length;
+      const dots = Array.from({ length: 5 }, (_, i) => { const id = level.chapter * 5 + i; return (i ? '<i></i>' : '') + '<span class="path-dot ' + (save.levels[id]?.passed ? 'done' : id === level.id ? 'current' : '') + '">' + (save.levels[id]?.passed ? '✓' : i + 1) + '</span>'; }).join('');
+      this.show('<main class="home-layout"><div class="hero"><span class="eyebrow">A PLAYFUL JOURNEY THROUGH FIVE GARDENS</span><h1>A little slice<br>of <em>wonder.</em></h1><p>Catch the rhythm. Follow the fruit.<br>Turn one good swipe into a great harvest.</p><div class="hero-foot"><i></i> MADE FOR A MOMENT OF PLAY</div></div><section class="journey-card" aria-label="Continue your journey"><div class="card-top"><span class="eyebrow">YOUR NEXT HARVEST</span><span class="pill">' + (complete ? 'All five gardens explored' : 'Chapter ' + (level.chapter + 1) + ' of 5') + '</span></div><h2>' + (complete ? 'The garden is yours.' : c.name) + '</h2><p class="card-copy">' + (complete ? 'Chase the missing stars, find every fruit, or make a fresh personal best.' : c.subtitle) + '</p><div class="path-preview" aria-hidden="true">' + dots + '</div><button class="primary full-width" data-action="play" data-mode="campaign" data-level="' + level.id + '" data-focus>' + (complete ? 'Revisit the finale' : 'Play ' + level.name) + '<span aria-hidden="true">↗</span></button><div class="button-row"><button class="secondary" data-action="chapters">The journey</button><button class="secondary" data-action="modes">More ways to play</button></div><div class="card-bottom"><span>' + totalStars + ' / 75 stars</span><button class="quiet-button" data-action="collection">Fruit journal ↗</button></div><button class="quiet-button full-width" data-action="help">How to play</button></section></main>', 'home', 'Swipe Harvest home');
+    }
+    chapters(chapter = this.chapter) {
+      this.chapter = H.clamp(chapter, 0, 4); const save = this.store.data, c = H.CHAPTERS[this.chapter];
+      const tabs = H.CHAPTERS.map((ch, i) => '<button class="chapter-tab ' + (i === this.chapter ? 'selected' : '') + '" data-action="chapter" data-value="' + i + '" aria-pressed="' + (i === this.chapter) + '">' + ch.short + '<span>' + (save.unlocked >= i * 5 ? 'CHAPTER ' + (i + 1) : 'LOCKED') + '</span></button>').join('');
+      const levels = H.LEVELS.filter(l => l.chapter === this.chapter).map(l => {
+        const item = save.levels[l.id] || {}, locked = l.id > save.unlocked;
+        const preview = new H.Engine({ level: l.id });
+        const description = 'Basket: ' + preview.goal + ' fruit · ' + l.duration + 's';
+        const mastery = l.id === 0 ? 'Extra stars: seven cuts / all eight' : 'Combo star: ' + l.comboGoal + ' fruit · precision: 93%';
+        return '<button class="level-card" data-action="play" data-mode="campaign" data-level="' + l.id + '" ' + (locked ? 'disabled' : '') + ' aria-label="' + l.name + (locked ? ', locked' : ', ' + [item.passed, item.combo, item.precision].filter(Boolean).length + ' stars') + '"><span class="level-number">' + (locked ? '·' : l.index + 1) + '</span><span class="level-text"><strong>' + l.name + '</strong><small>' + (locked ? 'Complete the previous harvest to unlock' : description + '<br>' + mastery) + '</small></span>' + stars(item.passed, item.combo, item.precision) + '</button>';
+      }).join('');
+      this.show('<main class="screen"><div class="screen-heading"><div><span class="eyebrow">CHAPTER ' + (this.chapter + 1) + ' OF 5</span><h1 class="screen-title">' + c.name + '</h1><p class="screen-subtitle">' + c.subtitle + '</p></div><button class="icon-button" data-action="home" aria-label="Back to home">' + icon('back') + '</button></div><nav class="chapter-tabs" aria-label="Choose a chapter">' + tabs + '</nav><div class="level-list">' + levels + '</div><p class="map-note">One star opens the next harvest. First Cut rewards seven and eight cuts. Later harvests award a combo star for the listed stroke size and a precision star for cutting at least 93% of required fruit without hitting a pot. Complete a chapter to unlock a new blade.</p></main>', 'chapters', 'Campaign chapters');
+    }
+    modes() {
+      const date = H.localDate(), assist = this.settings().assist || this.settings().slow ? '-assist' : '';
+      const modes = [{ mode: 'quick', symbol: '↗', name: 'Quick Play', copy: 'Sixty seconds of juicy combos. Bring your best blade and leave a new personal best.', foot: '60 SECONDS · SCORE CHASE' }, { mode: 'zen', symbol: '∞', name: 'Zen Garden', copy: 'A quiet, endless harvest. No hearts, no deadline. Stay for as long as you like.', foot: 'ENDLESS · NO PRESSURE' }, { mode: 'daily', symbol: '✦', name: 'Daily Harvest', copy: 'A fresh constellation of waves each day. Same seed on every retry. Your best stays on this device.', foot: date + ' · 60 SECONDS' }, { mode: 'survival', symbol: '♡', name: 'Survival', copy: 'Three hearts. Fruit slips and pot hits cost one. The gardens get wilder as you go.', foot: 'ENDLESS · THREE HEARTS' }];
+      this.show('<main class="screen"><div class="screen-heading"><div><span class="eyebrow">MAKE A LITTLE TIME FOR PLAY</span><h1 class="screen-title">Pick your rhythm.</h1><p class="screen-subtitle">' + (assist ? 'Practice scores are kept separately. ' : '') + 'Each garden has a different kind of joy.</p></div><button class="icon-button" data-action="home" aria-label="Back to home">' + icon('back') + '</button></div><div class="mode-grid">' + modes.map(m => '<button class="mode-card" data-action="play" data-mode="' + m.mode + '"><span class="mode-symbol" aria-hidden="true">' + m.symbol + '</span><strong>' + m.name + '</strong><p>' + m.copy + '</p><small>' + m.foot + '<br>BEST ' + number(this.store.data.bests[(m.mode === 'daily' ? 'daily-' + date : m.mode) + assist] || 0) + '</small></button>').join('') + '</div><p class="map-note">Choose a favorite unlocked garden for Quick Play and Zen in Settings. Daily Harvest visits the Star Orchard. Survival travels through all five gardens.</p></main>', 'modes', 'Game modes');
+    }
+    collection() {
+      const save = this.store.data;
+      this.show('<main class="screen"><div class="screen-heading"><div><span class="eyebrow">YOUR FRUIT JOURNAL</span><h1 class="screen-title">A colorful collection.</h1><p class="screen-subtitle">' + save.discovered.length + ' of 15 fruit discovered · ' + number(save.sliced) + ' original fruit sliced<br>Meet every variety as you travel through the gardens.</p></div><button class="icon-button" data-action="home" aria-label="Back to home">' + icon('back') + '</button></div><div class="collection-grid">' + H.FRUITS.map((fruit, i) => { const found = save.discovered.includes(i); return '<div class="fruit-card ' + (found ? '' : 'undiscovered') + '"><img src="' + this.renderer.image(i) + '" alt="' + (found ? fruit.name : 'Undiscovered fruit silhouette') + '"><span>' + (found ? fruit.name : 'Still growing') + '</span></div>'; }).join('') + '</div><p class="map-note">The journal and lifetime count update when a round or Zen session finishes.</p></main>', 'collection', 'Fruit collection');
+    }
+    help() {
+      this.show('<main class="screen surface modal"><span class="eyebrow">A SMALL GUIDE TO A GREAT HARVEST</span><h1 class="screen-title">Follow the fruit.</h1><p class="result-tip">Swipe or drag through fruit to cut it. One stroke can cut several fruit together. A combo groups hits within a short burst; lift your blade between waves for deliberate cuts.</p><p class="result-tip">Three clean waves raise your flow multiplier. Combos and clean waves fill the Harvest Rush meter. When it fills, the next wave begins a golden bonus harvest.</p><p class="result-tip">Golden fruit is optional and worth more points. Marked ceramic pots break your flow. In later chapters, pot hits cost a heart; Survival also costs a heart for each missed required fruit.</p><p class="result-tip">For keyboard play, use the arrows to move, hold Space to cut, hold Shift for a faster blade, and press Escape to pause. Target assistance and slower practice are in Settings.</p><button class="primary full-width" data-action="home" data-focus>Ready to grow ↗</button></main>', 'help', 'How to play');
+    }
+    start(mode, level = 0, introduction = false) {
+      this.audio.stop(); this.clearInput(); this.renderer.trail = []; this.renderer.shake = 0;
+      const chapter = mode === 'campaign' ? H.LEVELS[level].chapter : mode === 'daily' ? 4 : this.settings().garden >= 0 ? this.settings().garden : Math.floor(this.store.data.unlocked / 5);
+      const seed = mode === 'quick' || mode === 'zen' || mode === 'survival' ? Math.floor(Math.random() * 4294967295) : undefined;
+      this.engine = new H.Engine({ mode, level, chapter, width: this.renderer.width, height: this.renderer.height, settings: { ...this.settings(), quality: this.effectiveQuality() }, seed });
+      this.introduction = introduction; this.recordedEngine = null; this.hudCache = {}; this.cursor = { x: this.renderer.width / 2, y: this.renderer.height * 0.52 };
+      if (!introduction) this.engine.begin();
+      this.setScreen('playing'); $('endZen').hidden = mode !== 'zen'; $('gameCanvas').focus({ preventScroll: true }); this.updateHud();
+      $('announcer').textContent = introduction ? 'Swipe through the apple to begin. Arrow keys and Space also work.' : (mode === 'campaign' ? this.engine.level.name : mode) + ' started.';
+    }
+    pause() {
+      if (!this.engine || this.screen !== 'playing') return;
+      this.engine.pause(); this.audio.stop(); this.clearInput();
+      this.show('<section class="surface modal"><span class="eyebrow">TAKE YOUR TIME</span><h1 class="screen-title">The garden can wait.</h1><p class="result-tip">Your harvest is paused. Every fruit will be right where you left it.</p><button class="primary full-width" data-action="resume" data-focus>Keep harvesting ↗</button><div class="button-row"><button class="secondary" data-action="retry">Start again</button><button class="secondary" data-action="settings">Settings</button></div>' + (this.engine.mode !== 'campaign' ? '<button class="quiet-button full-width" data-action="end">Finish & save this harvest</button>' : '') + '<button class="quiet-button full-width" data-action="home">Leave this round</button></section>', 'paused', 'Paused game');
+    }
     resume() {
-        if (this.audioContext.state === 'suspended') {
-            this.audioContext.resume();
-        }
+      if (!this.engine) return this.home();
+      this.engine.resume(); this.setScreen('playing'); $('endZen').hidden = this.engine.mode !== 'zen'; $('gameCanvas').focus({ preventScroll: true }); this.lastFrame = 0;
     }
-
-    createSwishSound() {
-        const duration = 0.2;
-        const sampleRate = this.audioContext.sampleRate;
-        const buffer = this.audioContext.createBuffer(2, sampleRate * duration, sampleRate);
-        
-        for (let channel = 0; channel < 2; channel++) {
-            const data = buffer.getChannelData(channel);
-            for (let i = 0; i < buffer.length; i++) {
-                const t = i / sampleRate;
-                // Create a whooshing sound with frequency sweep
-                const freq = 2000 - (t / duration) * 1500; // Sweep from 2000Hz to 500Hz
-                const pan = channel === 0 ? -0.5 : 0.5; // Stereo separation
-                data[i] = Math.sin(2 * Math.PI * freq * t) * Math.exp(-4 * t) * 0.3;
+    retry() { const mode = this.engine?.mode || 'campaign', level = this.engine?.level.id || 0; this.start(mode, level); this.audio.unlock(); }
+    results() {
+      const e = this.engine, r = e.result;
+      if (!r) return;
+      if (this.recordedEngine !== e) { this.store.record(e); this.recordedEngine = e; }
+      const campaign = e.mode === 'campaign', final = campaign && e.level.id === 24, chapterEnd = campaign && e.level.index === 4 && r.passed;
+      const heading = campaign ? r.passed ? final ? 'A world well harvested.' : 'A lovely little harvest.' : 'Another swipe awaits.' : e.mode === 'survival' ? 'What a wild harvest.' : 'A moment well spent.';
+      const tip = campaign && !r.passed ? e.hearts === 0 ? 'Keep your blade clear of the marked pots. Try slower practice in Settings for more time to choose your stroke.' : 'Cut ' + Math.max(0, e.goal - r.requiredCut) + ' more required fruit to fill your basket.' : campaign ? 'Next time, chase a bigger combo or a cleaner basket.' : e.mode === 'daily' ? 'Today’s waves repeat on every retry. Your best is saved on this device.' : 'Lift your blade between waves, then cut a whole fan together.';
+      let next = campaign && r.passed && !final ? '<button class="primary full-width" data-action="next" data-focus>Next harvest ↗</button>' : '<button class="primary full-width" data-action="retry" data-focus>Harvest again ↗</button>';
+      const reward = chapterEnd ? '<div class="reward">✦ ' + bladeNames[e.level.chapter + 1] + ' blade unlocked' + (final ? ' · all five gardens complete!' : ' · a new garden awaits') + '</div>' : '';
+      this.show('<section class="surface modal"><span class="eyebrow">' + (campaign ? H.CHAPTERS[e.chapter].short + ' · ' + e.level.name : e.mode === 'daily' ? 'DAILY HARVEST · ' + e.date : e.mode.toUpperCase() + ' HARVEST') + '</span><h1 class="screen-title">' + heading + '</h1>' + (campaign ? '<div class="result-stars">' + stars(r.passed, r.passed && r.comboBadge, r.passed && r.precisionBadge) + '</div>' : '') + '<div class="result-score">' + number(r.score) + '</div><div class="result-caption">' + (r.newBest ? 'A NEW PERSONAL BEST' : 'HARVEST SCORE · BEST ' + number(r.best)) + '</div><div class="stat-grid"><div><strong>' + r.cut + '</strong><span>fruit sliced</span></div><div><strong>' + r.combo + '</strong><span>best combo</span></div><div><strong>' + (e.mode === 'survival' || e.mode === 'zen' ? this.formatTime(r.time) : r.clean) + '</strong><span>' + (e.mode === 'survival' || e.mode === 'zen' ? 'time in the garden' : 'clean waves') + '</span></div></div><p class="result-tip">' + tip + '</p>' + (e.settings.assist || e.settings.slow ? '<div class="badge-list"><span class="pill">Practice score</span><span class="pill">Campaign progress still counts</span></div>' : '') + reward + next + '<div class="button-row">' + (campaign && r.passed && !final ? '<button class="secondary" data-action="retry">Play again</button>' : '<button class="secondary" data-action="modes">Other modes</button>') + '<button class="secondary" data-action="home">Home</button></div>' + (this.store.warning ? '<p class="warning">' + escape(this.store.warning) + '</p>' : '') + '</section>', 'results', 'Round results');
+      $('announcer').textContent = heading + ' Score ' + r.score + '. ' + (campaign ? r.passed ? 'Challenge passed.' : 'Challenge incomplete.' : '');
+    }
+    formatTime(seconds) { const s = Math.floor(seconds); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+    settingsPanel() {
+      if (this.screen !== 'settings') { this.settingsReturn = this.screen; if (this.screen === 'playing') { this.pause(); this.settingsReturn = 'paused'; } }
+      const s = this.settings();
+      const toggle = (key, title, subtitle) => '<label class="setting-row"><span><strong>' + title + '</strong><small>' + subtitle + '</small></span><input class="toggle" type="checkbox" data-setting="' + key + '" ' + (s[key] ? 'checked' : '') + '></label>';
+      const blades = bladeNames.map((name, i) => '<option value="' + i + '" ' + (s.blade === i ? 'selected' : '') + ' ' + (i > H.unlockedBlade(this.store.data) ? 'disabled' : '') + '>' + name + (i > H.unlockedBlade(this.store.data) ? ' · locked' : '') + '</option>').join('');
+      const gardens = '<option value="-1" ' + (s.garden === -1 ? 'selected' : '') + '>Latest garden</option>' + H.CHAPTERS.map((c, i) => '<option value="' + i + '" ' + (s.garden === i ? 'selected' : '') + ' ' + (i > Math.floor(this.store.data.unlocked / 5) ? 'disabled' : '') + '>' + c.short + '</option>').join('');
+      this.show('<main class="screen surface modal"><div class="screen-heading"><div><span class="eyebrow">MAKE THE GARDEN YOURS</span><h1 class="screen-title">Little adjustments.</h1></div><button class="icon-button" data-action="close-settings" aria-label="Close settings">' + icon('close') + '</button></div>' + toggle('sound', 'Sound effects', 'Juicy cuts, combo chimes and quiet pot taps.') + toggle('music', 'Garden melody', 'A gentle, locally synthesized melody during play.') + '<label class="setting-row"><span><strong>Volume</strong></span><input type="range" min="0" max="1" step="0.05" value="' + s.volume + '" data-setting="volume" aria-label="Audio volume"></label><div class="settings-section"><span class="eyebrow">COMFORT & PLAY</span>' + toggle('reduced', 'Reduced motion', 'Less trail, fewer particles and no camera shake.') + toggle('contrast', 'High contrast', 'Quieter backgrounds and clear target outlines.') + toggle('assist', 'Larger targets', 'Extra room for your blade. Applies next round.') + toggle('slow', 'Slower practice', 'More time to read a wave. Applies next round.') + toggle('zenHazards', 'Pots in Zen', 'Optional avoidance practice. Applies next session.') + '<label class="setting-row"><span><strong>Effects quality</strong><small>Auto reduces rendering detail when frames slow down.</small></span><select data-setting="quality"><option value="auto" ' + (s.quality === 'auto' ? 'selected' : '') + '>Automatic</option><option value="full" ' + (s.quality === 'full' ? 'selected' : '') + '>Full</option><option value="low" ' + (s.quality === 'low' ? 'selected' : '') + '>Light</option></select></label><label class="setting-row"><span><strong>Your blade</strong><small>Complete chapters to discover new trails.</small></span><select data-setting="blade">' + blades + '</select></label><label class="setting-row"><span><strong>Quick Play & Zen garden</strong><small>Revisit any garden you have unlocked.</small></span><select data-setting="garden">' + gardens + '</select></label></div><p class="settings-note">Target assistance and slower practice keep separate personal bests. They still unlock campaign levels and rewards.</p><div class="settings-section"><span class="eyebrow">YOUR LOCAL PROGRESS</span><p class="settings-note">Progress stays in this browser. Export a save to move it or keep a backup.</p>' + (this.store.warning ? '<p class="warning">' + escape(this.store.warning) + '</p>' : '') + '<div class="button-row"><button class="secondary" data-action="export">Export save</button><button class="secondary" data-action="import">Import save</button></div><input type="file" id="saveFile" accept=".json,application/json" hidden><button class="quiet-button" data-action="reset">Reset all progress</button></div><button class="primary full-width" data-action="close-settings">Back to the garden</button></main>', 'settings', 'Game settings');
+    }
+    closeSettings() {
+      this.applySettings(); this.resize(false);
+      if (this.settingsReturn === 'paused' && this.engine) { this.setScreen('playing'); this.pause(); }
+      else if (this.settingsReturn === 'chapters') this.chapters();
+      else if (this.settingsReturn === 'modes') this.modes();
+      else if (this.settingsReturn === 'collection') this.collection();
+      else this.home();
+    }
+    exportSave() {
+      const blob = new Blob([JSON.stringify(this.store.data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = 'swipe-harvest-' + H.localDate() + '.json'; document.body.append(a); a.click(); a.remove(); root.setTimeout(() => URL.revokeObjectURL(url), 1000); this.toast('Your garden save is ready.');
+    }
+    toast(message) { $('toast').textContent = message; $('toast').hidden = false; root.clearTimeout(this.toastTimer); this.toastTimer = root.setTimeout(() => { $('toast').hidden = true; }, 3500); }
+    bind() {
+      document.addEventListener('click', event => {
+        const button = event.target.closest('[data-action]'); if (!button || button.disabled) return;
+        const action = button.dataset.action; this.audio.unlock();
+        if (action === 'home') this.home();
+        else if (action === 'chapters') this.chapters(Math.floor(this.store.data.unlocked / 5));
+        else if (action === 'chapter') this.chapters(Number(button.dataset.value));
+        else if (action === 'modes') this.modes();
+        else if (action === 'collection') this.collection();
+        else if (action === 'help') this.help();
+        else if (action === 'play') { const level = Number(button.dataset.level || 0); if (button.dataset.mode !== 'campaign' || level <= this.store.data.unlocked) this.start(button.dataset.mode, level); }
+        else if (action === 'pause') this.pause();
+        else if (action === 'resume') this.resume();
+        else if (action === 'retry') this.retry();
+        else if (action === 'next') this.start('campaign', Math.min(24, this.engine.level.id + 1));
+        else if (action === 'end' && this.engine && this.engine.mode !== 'campaign') { this.engine.finish(); this.results(); }
+        else if (action === 'settings') this.settingsPanel();
+        else if (action === 'close-settings') this.closeSettings();
+        else if (action === 'mute') { this.settings().sound = !this.settings().sound; this.store.write(); this.applySettings(); this.updateHud(); if (!this.settings().sound) this.audio.stop(); }
+        else if (action === 'export') this.exportSave();
+        else if (action === 'import') $('saveFile').click();
+        else if (action === 'reset' && root.confirm('Reset every unlocked level, star, personal best and fruit discovery? Export a save first if you want to keep them.')) { this.store.reset(); this.home(); this.applySettings(); }
+      });
+      document.addEventListener('change', async event => {
+        const input = event.target;
+        if (input.id === 'saveFile') {
+          const file = input.files[0]; if (!file) return;
+          try { if (file.size > 1000000) throw new Error('This save is too large.'); this.store.import(await file.text()); this.engine = null; this.settingsReturn = 'home'; this.applySettings(); this.settingsPanel(); this.toast('Your saved garden is back.'); }
+          catch (error) { this.toast('Could not import: ' + error.message); } finally { input.value = ''; }
+          return;
+        }
+        const key = input.dataset.setting; if (!key) return;
+        this.settings()[key] = input.type === 'checkbox' ? input.checked : ['volume', 'blade', 'garden'].includes(key) ? Number(input.value) : input.value;
+        this.store.write(); this.applySettings(); this.audio.unlock();
+        if (key === 'quality') { this.autoLow = false; this.resize(false); }
+        if (key === 'sound' || key === 'music') { this.audio.stop(); if (this.settings().sound) this.audio.play('combo', 3); }
+      });
+      const canvas = $('gameCanvas');
+      canvas.addEventListener('pointerdown', event => {
+        if (this.screen !== 'playing' || event.button !== 0 || this.pointer || event.isPrimary === false) return;
+        event.preventDefault(); this.audio.unlock(); this.keys.clear(); this.keyboardBlade = false;
+        const p = this.point(event); this.pointer = { id: event.pointerId, x: p.x, y: p.y, time: this.engine.time, clock: this.clock, gesture: ++this.gestureId };
+        this.engine.startGesture(this.pointer.gesture); this.renderer.addTrail(p.x, p.y, this.pointer.gesture, this.clock);
+        try { canvas.setPointerCapture(event.pointerId); } catch (_) {}
+      });
+      canvas.addEventListener('pointermove', event => {
+        if (!this.pointer || event.pointerId !== this.pointer.id || this.screen !== 'playing') return;
+        event.preventDefault();
+        let samples; try { samples = event.getCoalescedEvents?.(); } catch (_) {}
+        if (!samples?.length) samples = [event];
+        for (const sample of samples) {
+          const p = this.point(sample), last = this.pointer;
+          if (this.engine.state === 'ready') {
+            const hit = H.segmentCircle(last.x, last.y, p.x, p.y, this.renderer.width / 2, this.renderer.height * 0.52, Math.min(58, this.renderer.width * 0.13) + 6);
+            if (hit !== null && Math.hypot(p.x - last.x, p.y - last.y) >= 0.05) {
+              const fruit = { type: 0, x: this.renderer.width / 2, y: this.renderer.height * 0.52, r: Math.min(58, this.renderer.width * 0.13), vx: 0, vy: 0, angle: 0, spin: 0 };
+              this.engine.split(fruit, last.x, last.y, p.x, p.y); this.engine.burstEffect(fruit); this.engine.begin(); this.audio.play('slice'); this.introduction = false;
             }
+          } else this.engine.slice(last.x, last.y, p.x, p.y, last.time);
+          if (Math.hypot(p.x - last.x, p.y - last.y) > 0.2) this.audio.swish(this.clock);
+          this.renderer.addTrail(p.x, p.y, last.gesture, this.clock); last.x = p.x; last.y = p.y; last.time = this.engine.time;
         }
-        
-        return buffer;
+      });
+      const end = event => { if (this.pointer?.id === event.pointerId) { this.engine?.endGesture(); this.pointer = null; } };
+      canvas.addEventListener('pointerup', end); canvas.addEventListener('pointercancel', end); canvas.addEventListener('lostpointercapture', end);
+      canvas.addEventListener('contextmenu', event => event.preventDefault());
+      document.addEventListener('keydown', event => this.keyDown(event));
+      document.addEventListener('keyup', event => { this.keys.delete(event.code); if (event.code === 'Space' && this.keyboardBlade) { this.keyboardBlade = false; this.engine?.endGesture(); } });
+      root.addEventListener('resize', () => this.resize());
+      root.visualViewport?.addEventListener('resize', () => this.resize());
+      root.addEventListener('blur', () => { if (this.screen === 'playing') this.pause(); });
+      document.addEventListener('visibilitychange', () => { if (document.hidden && this.screen === 'playing') this.pause(); });
     }
-
-    createSquishSound() {
-        const duration = 0.15;
-        const sampleRate = this.audioContext.sampleRate;
-        const buffer = this.audioContext.createBuffer(2, sampleRate * duration, sampleRate);
-        
-        for (let channel = 0; channel < 2; channel++) {
-            const data = buffer.getChannelData(channel);
-            for (let i = 0; i < buffer.length; i++) {
-                const t = i / sampleRate;
-                // Create a squishy sound with noise and frequency modulation
-                const noise = (Math.random() * 2 - 1) * 0.5;
-                const freq = 800 + Math.sin(t * 50) * 200; // Modulated frequency
-                const envelope = Math.exp(-8 * t); // Quick decay
-                data[i] = (noise + Math.sin(2 * Math.PI * freq * t)) * envelope * 0.4;
-            }
+    keyDown(event) {
+      if (event.code === 'Escape') { event.preventDefault(); if (this.screen === 'playing') this.pause(); else if (this.screen === 'paused') this.resume(); else if (this.screen === 'settings') this.closeSettings(); else if (this.screen !== 'home' && this.screen !== 'results') this.home(); return; }
+      if (event.code === 'Tab' && !$('panel').hidden && $('panel').getAttribute('role') === 'dialog') {
+        const nodes = [...$('panel').querySelectorAll('button:not(:disabled), input:not([hidden]), select')];
+        if (nodes.length && (event.shiftKey && document.activeElement === nodes[0] || !event.shiftKey && document.activeElement === nodes[nodes.length - 1])) { event.preventDefault(); nodes[event.shiftKey ? nodes.length - 1 : 0].focus(); }
+        return;
+      }
+      if (this.screen !== 'playing' || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'ShiftLeft', 'ShiftRight'].includes(event.code)) return;
+      event.preventDefault(); this.keys.add(event.code); this.cursorVisible = true;
+      if (event.code === 'Space' && !event.repeat) { this.audio.unlock(); if (this.engine.state === 'ready') { this.engine.begin(); this.introduction = false; } this.keyboardBlade = true; this.engine.startGesture(++this.gestureId); this.renderer.addTrail(this.cursor.x, this.cursor.y, this.gestureId, this.clock); }
+    }
+    keyboard(dt) {
+      if (!this.cursor || this.screen !== 'playing' || !this.keys.size || this.pointer) return;
+      const p = { ...this.cursor }, speed = 430 * dt * (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') ? 1.85 : 1);
+      let dx = Number(this.keys.has('ArrowRight')) - Number(this.keys.has('ArrowLeft')), dy = Number(this.keys.has('ArrowDown')) - Number(this.keys.has('ArrowUp'));
+      if (dx && dy) { dx /= Math.SQRT2; dy /= Math.SQRT2; }
+      this.cursor.x = H.clamp(p.x + dx * speed, 10, this.renderer.width - 10); this.cursor.y = H.clamp(p.y + dy * speed, 10, this.renderer.height - 10);
+      if (this.keyboardBlade && (dx || dy)) { this.engine.slice(p.x, p.y, this.cursor.x, this.cursor.y, this.engine.time - dt); this.renderer.addTrail(this.cursor.x, this.cursor.y, this.gestureId, this.clock); this.audio.swish(this.clock); }
+    }
+    clearInput() {
+      if (this.pointer) { try { $('gameCanvas').releasePointerCapture(this.pointer.id); } catch (_) {} }
+      this.pointer = null; this.keys.clear(); this.keyboardBlade = false; this.cursorVisible = false; this.engine?.endGesture();
+    }
+    point(event) { return { x: (event.clientX - this.rect.left) * this.renderer.width / this.rect.width, y: (event.clientY - this.rect.top) * this.renderer.height / this.rect.height }; }
+    effectiveQuality() { return this.settings().quality === 'low' || this.settings().quality === 'auto' && this.autoLow ? 'low' : this.settings().quality; }
+    resize(pause = true) {
+      const w = Math.round(root.visualViewport?.width || root.innerWidth), h = Math.round(root.visualViewport?.height || root.innerHeight);
+      const changed = w !== this.renderer.width || h !== this.renderer.height;
+      if (pause && changed && this.screen === 'playing') this.pause();
+      this.renderer.resize(w, h, this.effectiveQuality()); this.rect = $('gameCanvas').getBoundingClientRect();
+      if (this.engine && changed) this.engine.resize(w, h);
+      this.cursor = { x: w / 2, y: h * 0.52 };
+    }
+    text(id, value) { if (this.hudCache[id] !== value) { $(id).textContent = value; this.hudCache[id] = value; } }
+    updateHud() {
+      const e = this.engine; if (!e) return;
+      this.text('scoreValue', number(e.score)); this.text('flowValue', 'FLOW ×' + e.flow.toFixed(e.flow % 1 ? 1 : 0));
+      this.text('roundTitle', e.mode === 'campaign' ? e.level.name : e.mode === 'daily' ? 'Daily Harvest' : e.mode === 'quick' ? 'Quick Play' : e.mode === 'zen' ? 'Zen Garden' : 'Survival');
+      this.text('objectiveValue', e.mode === 'campaign' ? e.requiredCut + ' / ' + e.goal + ' fruit' : e.mode === 'survival' ? 'Keep your three hearts' : e.mode === 'zen' ? 'Find your own rhythm' : 'Chase your best harvest');
+      const progress = e.mode === 'campaign' ? e.requiredCut / e.goal : e.duration === Infinity ? 1 : e.time / e.duration;
+      const width = Math.min(100, progress * 100).toFixed(1) + '%'; if ($('objectiveBar').style.width !== width) $('objectiveBar').style.width = width;
+      this.text('roundDetail', H.CHAPTERS[e.chapter].name + (e.settings.assist || e.settings.slow ? ' · practice' : ''));
+      this.text('timeValue', e.state === 'ready' ? '—' : e.duration === Infinity ? this.formatTime(e.time) : Math.ceil(Math.max(0, e.duration - e.time)) + 's');
+      this.text('heartsValue', e.hearts === null ? '' : '♥'.repeat(Math.max(0, e.hearts)) + '♡'.repeat(3 - Math.max(0, e.hearts)));
+      const muted = !this.settings().sound; if (this.hudCache.muted !== muted) { $('muteButton').innerHTML = icon(muted ? 'muted' : 'sound'); $('muteButton').setAttribute('aria-label', muted ? 'Enable sound effects' : 'Mute sound effects'); this.hudCache.muted = muted; }
+      const rush = e.time < e.rushUntil; this.text('rushLabel', rush ? '✦ HARVEST RUSH ✦' : e.meter >= 100 ? 'RUSH READY' : 'HARVEST RUSH');
+      $('rushBar').style.width = (rush ? (e.rushUntil - e.time) / 6 * 100 : e.meter) + '%'; $('rushHud').hidden = this.screen !== 'playing' || !e.rushEnabled;
+      let coach = e.state === 'ready' ? 'Swipe through the apple to begin' : e.state === 'resolving' ? 'One last sweep — finish your harvest' : e.time < 6 ? e.mode === 'survival' ? 'Keep your fruit. Keep your hearts.' : e.chapter === 4 ? 'Trace the constellation. Cut the whole ring.' : e.chapter >= 2 ? 'Choose a clear path around the marked pots.' : e.chapter === 1 ? 'Golden fruit is a little extra joy.' : 'Cut a whole wave together for a combo.' : rush ? 'A golden moment. Make it count.' : e.meter >= 100 ? 'Your next wave starts a Harvest Rush.' : 'Lift your blade. Catch the next rhythm.';
+      this.text('coach', coach);
+    }
+    signals() {
+      if (!this.engine) return;
+      for (const signal of this.engine.signals.splice(0)) {
+        if (signal.kind === 'slice') this.audio.play('slice');
+        else if (signal.kind === 'combo') { this.audio.play('combo', Math.min(7, signal.count)); if (!this.settings().reduced) this.renderer.shake = 1.5; }
+        else if (signal.kind === 'pot') { this.audio.play('pot'); if (!this.settings().reduced) this.renderer.shake = 3.5; }
+        else if (signal.kind === 'rush') this.audio.play('combo', 7);
+        else if (signal.kind === 'finish') this.audio.play(signal.passed ? 'finish' : 'pot');
+      }
+    }
+    frame(timestamp) {
+      const dt = this.lastFrame ? Math.max(0, (timestamp - this.lastFrame) / 1000) : 0; this.lastFrame = timestamp;
+      const playing = this.screen === 'playing';
+      if (playing && this.engine) {
+        this.engine.advance(dt);
+        if (this.engine.state === 'paused') this.pause();
+        else { this.keyboard(Math.min(dt, 0.05)); this.signals(); this.updateHud(); if (this.engine.state === 'finished') this.results(); }
+        if (this.settings().quality === 'auto') {
+          this.lowFrames = dt > 0.027 && dt < 0.15 ? this.lowFrames + 1 : Math.max(0, this.lowFrames - 1);
+          if (this.lowFrames > 90 && !this.autoLow) { this.autoLow = true; this.engine.settings.quality = 'low'; this.resize(false); }
         }
-        
-        return buffer;
+      }
+      if (!['paused', 'settings', 'results'].includes(this.screen)) this.clock += Math.min(dt, 0.05);
+      this.audio.tick(this.clock, this.screen === 'playing' && this.engine?.state === 'playing');
+      this.renderer.draw(this.engine && ['playing', 'paused', 'results', 'settings'].includes(this.screen) ? this.engine : null, this.clock, { settings: this.settings(), chapter: this.chapter, preview: this.screen === 'playing' && this.engine.state === 'ready', decorative: !['playing', 'paused', 'results'].includes(this.screen), cursor: this.screen === 'playing' && this.cursorVisible ? this.cursor : null });
+      root.requestAnimationFrame(this.frame);
     }
-
-    playSwish() {
-        this.resume();
-        const source = this.audioContext.createBufferSource();
-        source.buffer = this.createSwishSound();
-        
-        // Add stereo panning
-        const panner = this.audioContext.createStereoPanner();
-        panner.pan.value = (Math.random() - 0.5) * 0.5; // Random pan position
-        
-        // Add subtle reverb
-        const reverb = this.audioContext.createConvolver();
-        const reverbBuffer = this.audioContext.createBuffer(2, this.audioContext.sampleRate * 0.3, this.audioContext.sampleRate);
-        for (let channel = 0; channel < 2; channel++) {
-            const data = reverbBuffer.getChannelData(channel);
-            for (let i = 0; i < reverbBuffer.length; i++) {
-                data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (this.audioContext.sampleRate * 0.1));
-            }
-        }
-        reverb.buffer = reverbBuffer;
-        
-        // Connect nodes
-        source.connect(panner);
-        panner.connect(reverb);
-        reverb.connect(this.audioContext.destination);
-        
-        source.start();
-    }
-
-    playSquish() {
-        this.resume();
-        const source = this.audioContext.createBufferSource();
-        source.buffer = this.createSquishSound();
-        
-        // Add stereo panning
-        const panner = this.audioContext.createStereoPanner();
-        panner.pan.value = (Math.random() - 0.5) * 0.3; // Less panning for squish
-        
-        // Add subtle reverb
-        const reverb = this.audioContext.createConvolver();
-        const reverbBuffer = this.audioContext.createBuffer(2, this.audioContext.sampleRate * 0.2, this.audioContext.sampleRate);
-        for (let channel = 0; channel < 2; channel++) {
-            const data = reverbBuffer.getChannelData(channel);
-            for (let i = 0; i < reverbBuffer.length; i++) {
-                data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (this.audioContext.sampleRate * 0.05));
-            }
-        }
-        reverb.buffer = reverbBuffer;
-        
-        // Connect nodes
-        source.connect(panner);
-        panner.connect(reverb);
-        reverb.connect(this.audioContext.destination);
-        
-        source.start();
-    }
-}
-
-class Game {
-    constructor() {
-        this.canvas = document.getElementById('gameCanvas');
-        this.ctx = this.canvas.getContext('2d');
-        this.score = 0;
-        this.objects = [];
-        this.lastSpawnTime = 0;
-        this.spawnInterval = 1500; // Base spawn interval of 1.5 seconds
-        this.minSpawnInterval = 1000; // Minimum 1 second between spawns
-        this.maxSpawnInterval = 2000; // Maximum 2 seconds between spawns
-        this.touchStart = null;
-        this.gameStartTime = Date.now();
-        this.speedMultiplier = 1;
-        this.lastDifficultyIncrease = Date.now();
-        this.difficultyIncreaseInterval = 60000;
-        this.slashEffects = [];
-        
-        // Initialize sound manager
-        this.soundManager = new SoundManager();
-        
-        // Center point properties
-        this.centerX = this.canvas.width / 2;
-        this.centerY = this.canvas.height / 2;
-        this.lastCenterMove = Date.now();
-        this.centerMoveInterval = 30000;
-        
-        this.lastBackgroundChange = Date.now();
-        this.backgroundColors = [
-            '#ffb6c1', // Light pink
-            '#ffc0cb', // Pink
-            '#ff69b4', // Hot pink
-            '#ff1493', // Deep pink
-            '#db7093', // Pale violet red
-            '#ff69b4', // Hot pink
-            '#ffb6c1', // Light pink
-            '#ffc0cb'  // Pink
-        ];
-        this.currentColorIndex = 0;
-        
-        this.resize();
-        this.setupEventListeners();
-        this.gameLoop();
-    }
-
-    resize() {
-        const vw = window.innerWidth,
-              vh = window.innerHeight,
-              dpr = window.devicePixelRatio || 1;
-
-        // Set buffer resolution
-        this.canvas.width = vw * dpr;
-        this.canvas.height = vh * dpr;
-
-        // Make the CSS size match
-        this.canvas.style.width = `${vw}px`;
-        this.canvas.style.height = `${vh}px`;
-
-        // Scale the drawing context back to CSS space
-        this.ctx.resetTransform();
-        this.ctx.scale(dpr, dpr);
-
-        // Update center point in CSS-pixel space
-        this.updateCenterPoint();
-    }
-
-    updateCenterPoint() {
-        // Calculate the middle 25% of the screen in CSS-pixel space
-        const marginX = this.canvas.width * 0.375;
-        const marginY = this.canvas.height * 0.375;
-        
-        // Ensure center point is within the middle 25% of the screen
-        this.centerX = marginX + Math.random() * (this.canvas.width - 2 * marginX);
-        this.centerY = marginY + Math.random() * (this.canvas.height - 2 * marginY);
-        
-        // Log center point for debugging
-        console.log('Center point updated:', {
-            centerX: this.centerX,
-            centerY: this.centerY,
-            screenWidth: this.canvas.width,
-            screenHeight: this.canvas.height,
-            marginX,
-            marginY,
-            dpr: window.devicePixelRatio
-        });
-    }
-
-    setupEventListeners() {
-        // Handle both resize and orientation change events
-        window.addEventListener('resize', () => this.resize());
-        window.addEventListener('orientationchange', () => {
-            // Small delay to ensure new dimensions are available
-            setTimeout(() => this.resize(), 100);
-        });
-        
-        // Touch events
-        this.canvas.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            const rect = this.canvas.getBoundingClientRect();
-            const rawX = e.touches[0].clientX;
-            const rawY = e.touches[0].clientY;
-
-            // Map to CSS-pixel space
-            const x = (rawX - rect.left);
-            const y = (rawY - rect.top);
-
-            this.touchStart = { x, y };
-        });
-
-        this.canvas.addEventListener('touchmove', (e) => {
-            e.preventDefault();
-            if (!this.touchStart) return;
-
-            const rect = this.canvas.getBoundingClientRect();
-            const rawX = e.touches[0].clientX;
-            const rawY = e.touches[0].clientY;
-
-            // Map to CSS-pixel space
-            const x = (rawX - rect.left);
-            const y = (rawY - rect.top);
-            
-            // Create slash effect for every swipe
-            this.slashEffects.push(new SlashEffect(
-                this.touchStart.x,
-                this.touchStart.y,
-                x,
-                y
-            ));
-
-            this.checkSlice(
-                this.touchStart.x,
-                this.touchStart.y,
-                x,
-                y
-            );
-
-            // Update touch start for continuous swipes
-            this.touchStart = { x, y };
-        });
-
-        this.canvas.addEventListener('touchend', () => {
-            this.touchStart = null;
-        });
-
-        // Mouse events for desktop testing
-        this.canvas.addEventListener('mousedown', (e) => {
-            const rect = this.canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            this.touchStart = { x, y };
-        });
-
-        this.canvas.addEventListener('mousemove', (e) => {
-            if (!this.touchStart) return;
-
-            const rect = this.canvas.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            
-            // Create slash effect for every swipe
-            this.slashEffects.push(new SlashEffect(
-                this.touchStart.x,
-                this.touchStart.y,
-                x,
-                y
-            ));
-
-            this.checkSlice(
-                this.touchStart.x,
-                this.touchStart.y,
-                x,
-                y
-            );
-
-            // Update touch start for continuous swipes
-            this.touchStart = { x, y };
-        });
-
-        this.canvas.addEventListener('mouseup', () => {
-            this.touchStart = null;
-        });
-
-        // Prevent context menu on right click
-        this.canvas.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-        });
-    }
-
-    spawnObject() {
-        const now = Date.now();
-        if (now - this.lastSpawnTime < this.spawnInterval) return;
-        
-        this.lastSpawnTime = now;
-        // Randomize next spawn time between 3-5 seconds
-        this.spawnInterval = this.minSpawnInterval + Math.random() * (this.maxSpawnInterval - this.minSpawnInterval);
-        
-        // Spawn objects from the edges
-        let x, y;
-        const side = Math.floor(Math.random() * 4); // 0: top, 1: right, 2: bottom, 3: left
-        
-        // Add some randomness to spawn position along the edge
-        const edgeVariation = 0.3; // 30% variation from center of edge
-        
-        switch(side) {
-            case 0: // top
-                x = this.canvas.width * (0.5 + (Math.random() - 0.5) * edgeVariation);
-                y = -50;
-                break;
-            case 1: // right
-                x = this.canvas.width + 50;
-                y = this.canvas.height * (0.5 + (Math.random() - 0.5) * edgeVariation);
-                break;
-            case 2: // bottom
-                x = this.canvas.width * (0.5 + (Math.random() - 0.5) * edgeVariation);
-                y = this.canvas.height + 50;
-                break;
-            case 3: // left
-                x = -50;
-                y = this.canvas.height * (0.5 + (Math.random() - 0.5) * edgeVariation);
-                break;
-        }
-        
-        this.objects.push(new GameObject(x, y, 'orbital', this.speedMultiplier, this.centerX, this.centerY));
-    }
-
-    checkSlice(startX, startY, endX, endY) {
-        let sliced = false;
-        const newObjects = [];
-        
-        // Play swish sound for the slice motion
-        this.soundManager.playSwish();
-        
-        for (let i = this.objects.length - 1; i >= 0; i--) {
-            const obj = this.objects[i];
-            if (!obj.sliced && Date.now() - obj.lastSlicedTime > 200 && this.lineIntersectsObject(startX, startY, endX, endY, obj)) {
-                obj.createSliceParticles();
-                
-                // Create smaller pieces
-                const pieces = obj.breakIntoPieces();
-                if (pieces && pieces.length > 0) {
-                    newObjects.push(...pieces);
-                }
-                
-                // Play squish sound when fruit is hit
-                this.soundManager.playSquish();
-                sliced = true;
-                break;
-            }
-        }
-        
-        // Add new pieces to objects array
-        if (newObjects.length > 0) {
-            this.objects.push(...newObjects);
-        }
-        
-        return sliced;
-    }
-
-    lineIntersectsRect(x1, y1, x2, y2, rx, ry, rw, rh) {
-        const left = rx;
-        const right = rx + rw;
-        const top = ry;
-        const bottom = ry + rh;
-
-        // Check if line intersects with any of the rectangle's edges
-        return this.lineIntersectsLine(x1, y1, x2, y2, left, top, right, top) ||
-               this.lineIntersectsLine(x1, y1, x2, y2, right, top, right, bottom) ||
-               this.lineIntersectsLine(x1, y1, x2, y2, right, bottom, left, bottom) ||
-               this.lineIntersectsLine(x1, y1, x2, y2, left, bottom, left, top);
-    }
-
-    lineIntersectsLine(x1, y1, x2, y2, x3, y3, x4, y4) {
-        const denominator = ((y4 - y3) * (x2 - x1)) - ((x4 - x3) * (y2 - y1));
-        if (denominator === 0) return false;
-
-        const ua = (((x4 - x3) * (y1 - y3)) - ((y4 - y3) * (x1 - x3))) / denominator;
-        const ub = (((x2 - x1) * (y1 - y3)) - ((y2 - y1) * (x1 - x3))) / denominator;
-
-        return ua >= 0 && ua <= 1 && ub >= 0 && ub <= 1;
-    }
-
-    lineIntersectsObject(x1, y1, x2, y2, obj) {
-        const rx = obj.x - obj.width/2;
-        const ry = obj.y - obj.height/2;
-        const rw = obj.width;
-        const rh = obj.height;
-        return this.lineIntersectsRect(x1, y1, x2, y2, rx, ry, rw, rh);
-    }
-
-    update() {
-        // Update center point periodically
-        const currentTime = Date.now();
-        if (currentTime - this.lastCenterMove >= this.centerMoveInterval) {
-            this.updateCenterPoint();
-            this.lastCenterMove = currentTime;
-        }
-
-        // Update difficulty
-        if (currentTime - this.lastDifficultyIncrease >= this.difficultyIncreaseInterval) {
-            this.speedMultiplier += 0.2;
-            this.lastDifficultyIncrease = currentTime;
-            // Don't decrease spawn interval below minimum
-            this.minSpawnInterval = Math.max(800, this.minSpawnInterval - 50); // Won't go below 0.8 seconds
-            this.maxSpawnInterval = Math.max(1500, this.maxSpawnInterval - 50); // Won't go below 1.5 seconds
-        }
-
-        // Update background color every minute
-        if (currentTime - this.lastBackgroundChange >= 60000) { // 60000ms = 1 minute
-            this.currentColorIndex = (this.currentColorIndex + 1) % this.backgroundColors.length;
-            this.lastBackgroundChange = currentTime;
-        }
-
-        this.spawnObject();
-        
-        // Update objects
-        this.objects = this.objects.filter(obj => {
-            if (obj.isFading && obj.fadeProgress >= 1) {
-                return false;
-            }
-            obj.update();
-            return !obj.isOffscreen;
-        });
-
-        // Update slash effects
-        this.slashEffects = this.slashEffects.filter(effect => {
-            effect.update();
-            return effect.life > 0;
-        });
-    }
-
-    draw() {
-        // Clear canvas with current background color
-        this.ctx.fillStyle = this.backgroundColors[this.currentColorIndex];
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-        
-        // Draw objects
-        this.objects.forEach(obj => obj.draw(this.ctx));
-        
-        // Draw slash effects
-        this.slashEffects.forEach(effect => effect.draw(this.ctx));
-    }
-
-    gameLoop() {
-        this.update();
-        this.draw();
-        requestAnimationFrame(() => this.gameLoop());
-    }
-}
-
-// Start the game when the page loads with a delay to ensure proper initialization
-window.addEventListener('load', () => setTimeout(() => new Game(), 100)); 
+  }
+  H.App = App;
+  function boot() {
+    try { H.app = new App(); }
+    catch (error) { const panel = $('panel'); panel.hidden = false; panel.innerHTML = '<section class="surface modal"><h1 class="screen-title">The garden needs a moment.</h1><p>' + escape(error.message) + '</p><p>Use a browser with Canvas 2D and JavaScript enabled, then reload.</p></section>'; }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})(globalThis);

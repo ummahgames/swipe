@@ -1,14 +1,34 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Swipe Slice</title>
-    <link rel="stylesheet" href="styles.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#162f38">
+  <meta name="description" content="A little blade. A world of gardens. Swipe through a handcrafted fruit harvest, entirely in your browser.">
+  <title>Swipe Harvest — a little slice of wonder</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
-<body>
-    <canvas id="gameCanvas"></canvas>
-    <div id="score">Score: <span id="scoreValue">0</span></div>
-    <script src="game.js"></script>
+<body data-screen="loading">
+  <canvas id="gameCanvas" tabindex="0" aria-label="Fruit slicing play surface" aria-describedby="gameInstructions">Your browser needs Canvas support to play Swipe Harvest.</canvas>
+  <p id="gameInstructions" class="sr-only">Drag with your mouse, swipe with a finger, or move the blade with arrow keys and hold Space to slice. Cut fruit together for combos. Keep clear of marked ceramic pots. Hold Shift for a faster keyboard blade. Escape pauses the game.</p>
+  <header class="site-header" id="siteHeader">
+    <button class="wordmark" data-action="home" aria-label="Swipe Harvest home"><svg viewBox="0 0 40 40" aria-hidden="true"><path d="M9 29C7 11 18 4 33 7c2 16-8 25-24 22Z" fill="currentColor"/><path d="m9 30 18-17" fill="none" stroke="#162f38" stroke-width="2"/></svg><span>SWIPE<span class="wordmark-sub">HARVEST</span></span></button>
+    <div class="header-tools"><span class="local-tag">A LITTLE SLICE OF WONDER</span><button class="icon-button" data-action="settings" aria-label="Open settings" title="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></svg></button></div>
+  </header>
+  <section class="hud" id="hud" hidden aria-label="Round information">
+    <div class="score-block"><span class="eyebrow">HARVEST SCORE</span><strong id="scoreValue">0</strong><span class="flow-label" id="flowValue">FLOW ×1</span></div>
+    <div class="objective-block"><span id="roundTitle" class="eyebrow">FIRST CUT</span><strong id="objectiveValue">0 / 5 fruit</strong><div class="objective-track"><span id="objectiveBar"></span></div><span id="roundDetail">The Orchard</span></div>
+    <div class="round-tools"><div class="clock"><strong id="timeValue">—</strong><span id="heartsValue"></span></div><button class="icon-button" data-action="mute" id="muteButton" aria-label="Mute sound"></button><button class="icon-button" data-action="pause" aria-label="Pause round"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg></button></div>
+  </section>
+  <div class="rush-hud" id="rushHud" hidden><span id="rushLabel">HARVEST RUSH</span><div><i id="rushBar"></i></div></div>
+  <section class="overlay" id="panel" hidden tabindex="-1" aria-label="Game menu"></section>
+  <footer class="play-footer" id="playFooter" hidden><div><span class="coach" id="coach">Swipe through the fruit</span><span class="input-hint">SWIPE / DRAG · ARROWS + SPACE · ESC TO PAUSE</span></div><button class="quiet-button" id="endZen" data-action="end" hidden>Finish session ↗</button></footer>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <div id="announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+  <noscript><section class="noscript">Swipe Harvest needs JavaScript to grow. Enable it, then reload this page.</section></noscript>
+  <script src="core.js"></script>
+  <script src="art.js"></script>
+  <script src="audio.js"></script>
+  <script src="game.js"></script>
 </body>
-</html> 
+</html>

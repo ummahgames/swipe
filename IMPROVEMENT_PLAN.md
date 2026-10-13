@@ -2,11 +2,11 @@
 
 Rebuild Swipe around satisfying cuts, readable waves, and short harvest challenges. Preserve the immediate swipe interaction and the fruit theme, but replace the endless random orbital spawning with a campaign that teaches a skill, tests it, and rewards mastery. Keep the entire game in HTML, CSS, and JavaScript, with Canvas rendering and local saves.
 
-This is an implementation proposal. Gameplay values below are starting points for tuning. The first release should prove one polished chapter before expanding to the full campaign.
+Implementation status: the full campaign, four replay modes, procedural art and sound, local progression, settings, and code tests are implemented. Offline installation was excluded at the project owner’s request. README.md describes the shipped behavior. The proposal below preserves the original design rationale; its tuning values and sequencing are historical.
 
-## Current game assessment
+## Original game assessment
 
-The current game consists of a 1,253 line JavaScript file, a full screen canvas, a score label, and basic CSS. It includes 15 procedurally drawn fruits, swipe effects, synthesized audio, orbital motion, and an elapsed time difficulty increase. There are no external assets or runtime dependencies. The simplicity of deployment and the variety of fruit are worth preserving.
+The original game at commit 3e0eedc consisted of a 1,253 line JavaScript file, a full screen canvas, a score label, and basic CSS. It includes 15 procedurally drawn fruits, swipe effects, synthesized audio, orbital motion, and an elapsed time difficulty increase. There are no external assets or runtime dependencies. The simplicity of deployment and the variety of fruit are worth preserving.
 
 ### Confirmed defects
 
@@ -26,7 +26,7 @@ The current game consists of a 1,253 line JavaScript file, a full screen canvas,
 | P2 | Particle fading modifies an RGB string, but fruit colors are hex strings, so opacity never changes through that expression. Some drawing details use random values every frame, such as pineapple leaves. | Use `globalAlpha` for particles and stable per fruit visual data. |
 | P2 | There is no pause, restart, result screen, persistence, tutorial, or meaningful success or failure. Difficulty changes primarily by time survived. | Introduce a run lifecycle, authored goals, deliberate pacing, and saved chapter progress. |
 
-Source locations: [fruit construction and fragmentation](/Users/muhammad/Documents/GitHub/ummah-games/swipe/game.js:42), [movement and culling](/Users/muhammad/Documents/GitHub/ummah-games/swipe/game.js:156), [fruit rendering](/Users/muhammad/Documents/GitHub/ummah-games/swipe/game.js:266), [particles](/Users/muhammad/Documents/GitHub/ummah-games/swipe/game.js:691), [audio](/Users/muhammad/Documents/GitHub/ummah-games/swipe/game.js:797), [viewport and input](/Users/muhammad/Documents/GitHub/ummah-games/swipe/game.js:949), [spawning and collision](/Users/muhammad/Documents/GitHub/ummah-games/swipe/game.js:1092), [difficulty and game loop](/Users/muhammad/Documents/GitHub/ummah-games/swipe/game.js:1193).
+The audited source is preserved in commit 3e0eedc. The original fruit, physics, audio, input, and collision code was in game.js; the replacement separates those responsibilities across core.js, art.js, audio.js, and game.js.
 
 The reproduced failures come from isolated Node execution of the existing classes with canvas and audio stubs. Visual polish, actual input latency, and physical device performance require later measurement; they are not established by these fixtures.
 
